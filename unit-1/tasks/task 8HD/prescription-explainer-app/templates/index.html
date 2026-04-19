@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Healthcare Prescription Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f7fb;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            text-align: center;
+            color: #1f3c88;
+            margin-bottom: 10px;
+        }
+
+        p.subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        input[type="file"],
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #1f3c88;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            cursor: pointer;
+            display: inline-block;
+        }
+
+        button:hover {
+            background-color: #162d66;
+        }
+
+        .result-box {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f8fafc;
+            border-left: 5px solid #1f3c88;
+            border-radius: 8px;
+        }
+
+        .result-box h3,
+        .ocr-box h4 {
+            margin-top: 0;
+            color: #1f3c88;
+        }
+
+        .ocr-box {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fcfcfc;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: Consolas, monospace;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .footer-note {
+            margin-top: 25px;
+            font-size: 13px;
+            color: #888;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+    <h1>Healthcare Prescription Assistant</h1>
+    <p class="subtitle">
+        Upload a prescription image and/or enter a question to receive a simplified explanation.
+    </p>
+
+    <form id="unifiedForm" action="/process_voice" method="POST" enctype="multipart/form-data">
+        <label for="image">Upload Prescription Image</label>
+        <input type="file" name="image" id="image">
+
+        <label for="user_text">Enter Your Question</label>
+        <input type="text" name="user_text" id="user_text" placeholder="e.g. Explain this prescription or What is the dosage?">
+
+        <hr>
+
+        <h3>Voice Input</h3>
+        <p class="subtitle">Record a short voice question instead of typing.</p>
+
+        <button type="button" id="startRecord">Start Recording</button>
+        <button type="button" id="stopRecord" disabled>Stop Recording</button>
+
+        <p id="recordingStatus"></p>
+
+        <input type="file" name="audio" id="audioFileInput" hidden>
+
+        <button type="submit" id="submitVoice">Submit Query</button>
+    </form>
+
+        {% if result %}
+        
+            <div class="result-box">
+                <h3>Assistant Response</h3>
+                <p>{{ result.response_message }}</p>
+            </div>
+        
+            {% if result.recognized_text %}
+                <div class="ocr-box">
+                    <h4>Recognized Voice Text</h4>
+                    <pre>{{ result.recognized_text }}</pre>
+                </div>
+            {% endif %}
+        
+            {% if result.ocr_text %}
+                <div class="ocr-box">
+                    <h4>Extracted OCR Text</h4>
+                    <pre>{{ result.ocr_text }}</pre>
+                </div>
+            {% endif %}
+        
+        {% endif %}
+
+        <div class="footer-note">
+            Demo application for educational purposes only.
+        </div>
+    </div>
+
+    <!--Scripts-->
+   <script>
+    let mediaRecorder;
+    let audioChunks = [];
+    let streamRef = null;
+
+    const startBtn = document.getElementById("startRecord");
+    const stopBtn = document.getElementById("stopRecord");
+    const submitBtn = document.getElementById("submitVoice");
+    const statusText = document.getElementById("recordingStatus");
+    const audioInput = document.getElementById("audioFileInput");
+
+    startBtn.addEventListener("click", async () => {
+        try {
+            streamRef = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            let options = {};
+            if (MediaRecorder.isTypeSupported("audio/webm")) {
+                options.mimeType = "audio/webm";
+            }
+
+            mediaRecorder = new MediaRecorder(streamRef, options);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    audioChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = async () => {
+                try {
+                    const recordedBlob = new Blob(audioChunks, {
+                        type: mediaRecorder.mimeType || "audio/webm"
+                    });
+
+                    const wavBlob = await convertBlobToWav(recordedBlob);
+
+                    const wavFile = new File([wavBlob], "voice_question.wav", {
+                        type: "audio/wav"
+                    });
+
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(wavFile);
+                    audioInput.files = dataTransfer.files;
+
+                    statusText.textContent = "Recording converted to WAV and ready to submit.";
+                } catch (err) {
+                    console.error(err);
+                    statusText.textContent = "Failed to prepare voice recording.";
+                }
+
+                if (streamRef) {
+                    streamRef.getTracks().forEach(track => track.stop());
+                }
+            };
+
+            mediaRecorder.start();
+            statusText.textContent = "Recording...";
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+        } catch (err) {
+            console.error(err);
+            statusText.textContent = "Microphone access failed.";
+        }
+    });
+
+    stopBtn.addEventListener("click", () => {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            mediaRecorder.stop();
+        }
+        statusText.textContent = "Stopping and converting...";
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+    });
+
+    async function convertBlobToWav(blob) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+        const targetSampleRate = 16000;
+        const monoBuffer = downmixToMono(audioBuffer);
+        const resampledBuffer = await resampleAudioBuffer(monoBuffer, audioContext, targetSampleRate);
+
+        const wavArrayBuffer = encodeWav(resampledBuffer);
+        return new Blob([wavArrayBuffer], { type: "audio/wav" });
+    }
+
+    function downmixToMono(audioBuffer) {
+        if (audioBuffer.numberOfChannels === 1) {
+            return audioBuffer;
+        }
+
+        const offlineCtx = new OfflineAudioContext(
+            1,
+            audioBuffer.length,
+            audioBuffer.sampleRate
+        );
+
+        const bufferSource = offlineCtx.createBufferSource();
+        bufferSource.buffer = audioBuffer;
+
+        const merger = offlineCtx.createGain();
+        bufferSource.connect(merger);
+        merger.connect(offlineCtx.destination);
+
+        bufferSource.start(0);
+        return offlineCtx.startRendering();
+    }
+
+    async function resampleAudioBuffer(audioBufferOrPromise, audioContext, targetSampleRate) {
+        const inputBuffer = await audioBufferOrPromise;
+
+        if (inputBuffer.sampleRate === targetSampleRate && inputBuffer.numberOfChannels === 1) {
+            return inputBuffer;
+        }
+
+        const length = Math.ceil(inputBuffer.duration * targetSampleRate);
+        const offlineCtx = new OfflineAudioContext(1, length, targetSampleRate);
+
+        const source = offlineCtx.createBufferSource();
+        source.buffer = inputBuffer;
+        source.connect(offlineCtx.destination);
+        source.start(0);
+
+        return await offlineCtx.startRendering();
+    }
+
+    function encodeWav(audioBuffer) {
+        const numChannels = 1;
+        const sampleRate = audioBuffer.sampleRate;
+        const samples = audioBuffer.getChannelData(0);
+        const buffer = new ArrayBuffer(44 + samples.length * 2);
+        const view = new DataView(buffer);
+
+        writeString(view, 0, "RIFF");
+        view.setUint32(4, 36 + samples.length * 2, true);
+        writeString(view, 8, "WAVE");
+        writeString(view, 12, "fmt ");
+        view.setUint32(16, 16, true); // PCM chunk size
+        view.setUint16(20, 1, true);  // PCM format
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * numChannels * 2, true);
+        view.setUint16(32, numChannels * 2, true);
+        view.setUint16(34, 16, true); // 16-bit
+        writeString(view, 36, "data");
+        view.setUint32(40, samples.length * 2, true);
+
+        floatTo16BitPCM(view, 44, samples);
+
+        return buffer;
+    }
+
+    function floatTo16BitPCM(view, offset, input) {
+        for (let i = 0; i < input.length; i++, offset += 2) {
+            let s = Math.max(-1, Math.min(1, input[i]));
+            view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
+    }
+
+    function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    }
+</script>
+</body>
+</html>
